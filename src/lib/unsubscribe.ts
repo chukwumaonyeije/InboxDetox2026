@@ -1,9 +1,16 @@
 import { prisma } from "./prisma";
 
+export interface UnsubscribeResult {
+  success: boolean;
+  method: string;
+  error?: string;
+  pending?: boolean;
+}
+
 export async function executeUnsubscribe(
   userId: string,
   subscriptionId: string
-): Promise<{ success: boolean; method: string; error?: string }> {
+): Promise<UnsubscribeResult> {
   const subscription = await prisma.subscription.findFirst({
     where: { id: subscriptionId, userId },
   });
@@ -14,6 +21,7 @@ export async function executeUnsubscribe(
 
   let method = "manual";
   let success = false;
+  let pending = false;
   let errorMessage: string | undefined;
 
   try {
@@ -30,9 +38,10 @@ export async function executeUnsubscribe(
         errorMessage = `HTTP ${response.status}`;
       }
     } else if (subscription.unsubscribeEmail) {
-      // Mark as email method — actual sending requires SMTP or Gmail API
+      // Automated sending is not implemented yet, so keep this pending.
       method = "email";
-      success = true; // draft-only; sending handled client-side
+      pending = true;
+      errorMessage = "Email unsubscribe requires manual sending";
     } else {
       method = "manual";
       success = false;
@@ -49,7 +58,7 @@ export async function executeUnsubscribe(
       userId,
       subscriptionId,
       method,
-      status: success ? "success" : "failed",
+      status: success ? "success" : pending ? "pending" : "failed",
       errorMessage,
     },
   });
@@ -62,7 +71,7 @@ export async function executeUnsubscribe(
     });
   }
 
-  return { success, method, error: errorMessage };
+  return { success, method, error: errorMessage, pending };
 }
 
 export async function bulkUnsubscribe(

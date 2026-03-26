@@ -27,6 +27,16 @@ interface Props {
   category: string;
 }
 
+type ActionState = "loading" | "done" | "kept" | "error" | "pending";
+
+interface UnsubscribeResult {
+  subscriptionId?: string;
+  success: boolean;
+  method: string;
+  error?: string;
+  pending?: boolean;
+}
+
 export default function SubscriptionList({
   subscriptions,
   total,
@@ -42,7 +52,7 @@ export default function SubscriptionList({
   const [isPending, startTransition] = useTransition();
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [actionStates, setActionStates] = useState<Record<string, "loading" | "done" | "kept" | "error">>({});
+  const [actionStates, setActionStates] = useState<Record<string, ActionState>>({});
   const [searchInput, setSearchInput] = useState(q);
 
   function buildUrl(overrides: Record<string, string>) {
@@ -98,9 +108,18 @@ export default function SubscriptionList({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subscriptionId: id }),
       });
-      if (!res.ok) throw new Error();
-      setActionStates((prev) => ({ ...prev, [id]: "done" }));
-      startTransition(() => router.refresh());
+      const json = (await res.json()) as { data?: UnsubscribeResult; error?: string };
+      if (!res.ok || !json.data) throw new Error(json.error || "Unsubscribe failed");
+
+      const nextState: ActionState = json.data.success
+        ? "done"
+        : json.data.pending
+        ? "pending"
+        : "error";
+      setActionStates((prev) => ({ ...prev, [id]: nextState }));
+      if (json.data.success) {
+        startTransition(() => router.refresh());
+      }
     } catch {
       setActionStates((prev) => ({ ...prev, [id]: "error" }));
     }
@@ -117,12 +136,29 @@ export default function SubscriptionList({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subscriptionIds: ids }),
       });
-      if (!res.ok) throw new Error();
-      const doneUpdates: Record<string, "done"> = {};
-      ids.forEach((id) => (doneUpdates[id] = "done"));
-      setActionStates((prev) => ({ ...prev, ...doneUpdates }));
+      const json = (await res.json()) as { data?: UnsubscribeResult[]; error?: string };
+      if (!res.ok || !json.data) throw new Error(json.error || "Bulk unsubscribe failed");
+
+      const nextStates: Record<string, ActionState> = {};
+      for (const result of json.data) {
+        const resultId = result.subscriptionId;
+        if (!resultId) continue;
+        nextStates[resultId] = result.success
+          ? "done"
+          : result.pending
+          ? "pending"
+          : "error";
+      }
+
+      ids.forEach((id) => {
+        if (!nextStates[id]) nextStates[id] = "error";
+      });
+
+      setActionStates((prev) => ({ ...prev, ...nextStates }));
       setSelected(new Set());
-      startTransition(() => router.refresh());
+      if (json.data.some((result) => result.success)) {
+        startTransition(() => router.refresh());
+      }
     } catch {
       const errUpdates: Record<string, "error"> = {};
       ids.forEach((id) => (errUpdates[id] = "error"));
@@ -413,6 +449,10 @@ export default function SubscriptionList({
                     {state === "error" ? (
                       <span className="text-xs" style={{ color: "var(--color-dwc-danger)" }}>
                         Failed
+                      </span>
+                    ) : state === "pending" ? (
+                      <span className="text-xs" style={{ color: "var(--color-dwc-warning)" }}>
+                        Manual Step
                       </span>
                     ) : sub.status === "unsubscribed" || state === "done" ? (
                       <span className="text-xs" style={{ color: "var(--color-dwc-success)" }}>

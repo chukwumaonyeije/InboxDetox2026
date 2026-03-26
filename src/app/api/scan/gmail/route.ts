@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getGoogleAccessToken } from "@/lib/provider-tokens";
 import { google } from "googleapis";
 
 export async function POST() {
+  let scanId: string | null = null;
+  let emailsScanned = 0;
+
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -11,26 +15,14 @@ export async function POST() {
     }
 
     const userId = session.user.id;
-
-    // Get the Google access token from the account table
-    const account = await prisma.account.findFirst({
-      where: { userId, provider: "google" },
-    });
-
-    if (!account?.access_token) {
-      return NextResponse.json(
-        { error: "No Gmail account connected" },
-        { status: 400 }
-      );
-    }
+    const accessToken = await getGoogleAccessToken(userId);
 
     const oauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET
     );
     oauth2Client.setCredentials({
-      access_token: account.access_token,
-      refresh_token: account.refresh_token ?? undefined,
+      access_token: accessToken,
     });
 
     const gmail = google.gmail({ version: "v1", auth: oauth2Client });
@@ -70,11 +62,13 @@ export async function POST() {
       data: {
         userId,
         provider: "gmail",
-        emailsScanned: allMessageIds.size,
+        emailsScanned: 0,
         subsFound: 0,
         status: "running",
       },
     });
+    scanId = scan.id;
+    emailsScanned = allMessageIds.size;
 
     const senderMap = new Map<string, {
       senderEmail: string;
@@ -188,14 +182,29 @@ export async function POST() {
 
     await prisma.emailScan.update({
       where: { id: scan.id },
-      data: { subsFound, status: "completed", completedAt: new Date() },
+      data: {
+        emailsScanned,
+        subsFound,
+        status: "completed",
+        completedAt: new Date(),
+      },
     });
 
     return NextResponse.json({
-      data: { scanId: scan.id, emailsScanned: allMessageIds.size, subsFound },
+      data: { scanId: scan.id, emailsScanned, subsFound },
     });
   } catch (err) {
     console.error("Gmail scan error:", err);
+    if (scanId) {
+      await prisma.emailScan.update({
+        where: { id: scanId },
+        data: {
+          emailsScanned,
+          status: "failed",
+          completedAt: new Date(),
+        },
+      });
+    }
     const message = err instanceof Error ? err.message : "Internal server error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
