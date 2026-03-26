@@ -1,0 +1,143 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── NextAuth Models ─────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+  scans         EmailScan[]
+  subscriptions Subscription[]
+  actions       UnsubscribeAction[]
+  summaries     WeeklySummary[]
+  filterPrefs   FilterPreference?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Application Models ──────────────────────────────
+
+model EmailScan {
+  id            String    @id @default(cuid())
+  userId        String
+  provider      String    // "gmail" | "outlook"
+  emailsScanned Int
+  subsFound     Int
+  startedAt     DateTime  @default(now())
+  completedAt   DateTime?
+  status        String    @default("running") // running | completed | failed
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Subscription {
+  id               String   @id @default(cuid())
+  userId           String
+  provider         String   // "gmail" | "outlook"
+  senderEmail      String
+  senderName       String?
+  senderDomain     String   // extracted domain for filtering
+  subjectSample    String?  // example subject line
+  emailCount       Int      @default(1)
+  firstSeen        DateTime
+  lastSeen         DateTime
+  isRead           Boolean  @default(false)
+  aiCategory       String?  // "promotional" | "newsletter" | "transactional" | "social" | "updates"
+  aiConfidence     Float?   // 0.0 - 1.0
+  unsubscribeUrl   String?
+  unsubscribeEmail String?
+  status           String   @default("active") // active | unsubscribed | ignored | failed
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  actions          UnsubscribeAction[]
+
+  @@unique([userId, senderEmail, provider])
+  @@index([userId, senderDomain])
+  @@index([userId, aiCategory])
+  @@index([userId, lastSeen])
+}
+
+model UnsubscribeAction {
+  id             String       @id @default(cuid())
+  userId         String
+  subscriptionId String
+  method         String       // "link" | "email" | "manual"
+  status         String       // "success" | "failed" | "pending"
+  draftedMessage String?      @db.Text
+  errorMessage   String?
+  executedAt     DateTime     @default(now())
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+}
+
+model WeeklySummary {
+  id                String   @id @default(cuid())
+  userId            String
+  weekStarting      DateTime
+  totalSubs         Int
+  newSubs           Int
+  unsubscribed      Int
+  topDomains        Json     // { "mailchimp.com": 45, "substack.com": 23 }
+  categoryBreakdown Json     // { "promotional": 120, "newsletter": 45 }
+  aiNarrative       String   @db.Text
+  createdAt         DateTime @default(now())
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weekStarting])
+}
+
+model FilterPreference {
+  id              String  @id @default(cuid())
+  userId          String  @unique
+  blockedDomains  Json    @default("[]")
+  blockedKeywords Json    @default("[]")
+  maxAgeDays      Int?
+  unreadOnly      Boolean @default(false)
+  autoCategories  Json    @default("[]")
+  user            User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
