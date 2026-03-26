@@ -17,6 +17,23 @@ function createPrismaClient() {
   });
 }
 
-export const prisma = globalForPrisma.prisma ?? createPrismaClient();
+function getPrismaClient() {
+  if (!globalForPrisma.prisma) {
+    globalForPrisma.prisma = createPrismaClient();
+  }
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+  return globalForPrisma.prisma;
+}
+
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop, receiver) {
+    const client = getPrismaClient() as unknown as Record<PropertyKey, unknown>;
+    const value = Reflect.get(client, prop, receiver);
+
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+}) as PrismaClient;
+
+if (process.env.NODE_ENV === "production" && globalForPrisma.prisma) {
+  globalForPrisma.prisma = undefined;
+}

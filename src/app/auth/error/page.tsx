@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function AuthErrorPage() {
   return (
     <div className="min-h-screen flex items-center justify-center px-6">
@@ -11,9 +13,9 @@ export default function AuthErrorPage() {
         <p style={{ color: "var(--color-dwc-text-muted)" }}>
           Something went wrong during sign-in. Please try again.
         </p>
-        <a href="/" className="btn-primary inline-flex justify-center">
+        <Link href="/" className="btn-primary inline-flex justify-center">
           Back to Home
-        </a>
+        </Link>
       </div>
     </div>
   );
